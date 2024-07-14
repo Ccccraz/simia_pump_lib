@@ -24,7 +24,7 @@ class AT8236
     ~AT8236() = default;
 };
 
-inline AT8236::AT8236(uint8_t firstPin, uint8_t lastPin, float speed = 1)
+inline AT8236::AT8236(uint8_t firstPin, uint8_t lastPin, float speed)
     : _positive_pin(firstPin), _negative_pin(lastPin), _speed(constrain(speed, 0.0f, 1.0f))
 {
     pinMode(_positive_pin, OUTPUT);
