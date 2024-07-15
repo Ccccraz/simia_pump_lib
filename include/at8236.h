@@ -38,15 +38,15 @@ inline auto AT8236::start() -> void
     this->stop();
 
     analogWrite(_positive_pin, _speed_real);
-    digitalWrite(_negative_pin, LOW);
+    analogWrite(_negative_pin, LOW);
 
     _isrunning = true;
 }
 
 inline auto AT8236::stop() -> void
 {
-    digitalWrite(_positive_pin, LOW);
-    digitalWrite(_negative_pin, LOW);
+    analogWrite(_positive_pin, LOW);
+    analogWrite(_negative_pin, LOW);
 
     _isrunning = false;
 }
@@ -69,6 +69,10 @@ inline auto AT8236::set_speed(float speed) -> void
 {
     _speed = constrain(speed, 0.0f, 1.0f);
     _speed_real = static_cast<int>(_speed * 255);
+    if (_isrunning)
+    {
+        analogWrite(_positive_pin, _speed_real);
+    }
 }
 
 inline auto AT8236::get_speed() -> uint8_t
