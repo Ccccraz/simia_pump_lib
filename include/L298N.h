@@ -14,13 +14,13 @@ class L298N
     auto start() -> void;
     auto stop() -> void;
     auto reverse() -> void;
-    auto setSpeed(float speed) -> void;
+    auto set_speed(float speed) -> void;
     auto getSpeed() -> int;
 
   private:
     int _positivePin{};
     int _negativePin{};
-    bool _is_running{false};
+    bool _rewarding{false};
     bool _is_reversing{false};
     int _PWMPin{};
 
@@ -61,7 +61,7 @@ inline auto L298N::start() -> void
         analogWrite(_PWMPin, _speed);
     }
 
-    _is_running = true;
+    _rewarding = true;
 }
 
 inline auto L298N::stop() -> void
@@ -69,19 +69,19 @@ inline auto L298N::stop() -> void
     digitalWrite(_positivePin, LOW);
     digitalWrite(_negativePin, LOW);
 
-    _is_running = false;
+    _rewarding = false;
 }
 
 inline auto L298N::reverse() -> void
 {
     std::swap<int>(_positivePin, _negativePin);
-    if (_is_running)
+    if (_rewarding)
     {
         this->start();
     }
 }
 
-inline auto L298N::setSpeed(float speed) -> void
+inline auto L298N::set_speed(float speed) -> void
 {
     _speedPre = constrain(speed, 0.0f, 1.0f);
     _speed = static_cast<int>(_speedPre * 255);
