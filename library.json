@@ -1,6 +1,6 @@
 {
     "name": "simia_pump",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "description": "driver for simia pump",
     "keywords": "simia, psychounity",
     "repository": {
