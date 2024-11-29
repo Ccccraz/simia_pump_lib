@@ -11,14 +11,24 @@ class AT8236BrushlessHID : USBHIDDevice
 {
   private:
     // HID device
-    char report_descriptor[16] = {
-        0x06, 0x00, 0xff, // USAGE_PAGE (Generic Desktop)
-        0x09, 0x01,       // USAGE (Vendor Usage 1)
+    char report_descriptor[35] = {
+        0x05, 0x01,       // USAGE_PAGE (Generic Desktop)
+        0x09, 0x04,       // USAGE (Joystick)
         0xa1, 0x01,       // COLLECTION (Application)
-        0x09, 0x01,       //   USAGE (Vendor Usage 1)
-        0x75, 0x20,       //   REPORT_SIZE (32)
-        0x95, 0x05,       //   REPORT_COUNT (5)
-        0x91, 0x02,       //   OUTPUT (Data,Var,Abs)
+        0xa1, 0x00,       //   COLLECTION (Physical)
+        0x05, 0x01,       //     USAGE_PAGE (Generic Desktop)
+        0x09, 0x39,       //     USAGE (Hat switch)
+        0x15, 0x01,       //     LOGICAL_MINIMUM (0)
+        0x25, 0x08,       //     LOGICAL_MAXIMUM (8)
+        0x75, 0x08,       //     REPORT_SIZE (8)
+        0x95, 0x01,       //     REPORT_COUNT (1)
+        0x81, 0x02,       //     INPUT (Data,Var,Abs)
+        0x06, 0x00, 0xff, //     USAGE_PAGE (Vendor Defined Page 1)
+        0x09, 0x01,       //     USAGE (Vendor Usage 1)
+        0x75, 0x20,       //     REPORT_SIZE (32)
+        0x95, 0x05,       //     REPORT_COUNT (5)
+        0x91, 0x02,       //     OUTPUT (Data,Var,Abs)
+        0xc0,             //   END_COLLECTION
         0xc0              // END_COLLECTION
     };
 
