@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <USB.h>
 #include <USBHID.h>
+
+#include <atomic>
 #include <cstring>
 
 namespace simia
@@ -33,20 +35,23 @@ class AT8236HID : USBHIDDevice
     };
 
     // Output report
-    struct report_t
-    {
-        float reward; // Start pump when value = 1, otherwise keep value = 0
-        float duration; // Start pump and stop after a certain time, unit is milliseconds
-        float stop; // Stop pump when value = 1, otherwise keep value = 0
-        float speed; // Set the running speed of the pump, the value range is 0 - 1, representing the percentage of the maximum speed of the pump
-        float reverse; // Change the running direction of the pump, if value = 1, reverse the pump, otherwise keep value = 0
-    };
     // example command:
     // start pump: [1, 0, 0, 0, 0]
     // start pump for 1s: [1, 1000, 0, 0, 0]
     // stop pump: [0, 0, 1, 0, 0]
     // set speed: [0, 0, 0, 0.5, 0]
     // reverse pump: [0, 0, 0 , 0, 1]
+    struct report_t
+    {
+        float reward;   // Start pump when value = 1, otherwise keep value = 0
+        float duration; // Start pump and stop after a certain time, unit is
+                        // milliseconds
+        float stop;     // Stop pump when value = 1, otherwise keep value = 0
+        float speed;    // Set the running speed of the pump, the value range is 0 - 1,
+                        // representing the percentage of the maximum speed of the pump
+        float reverse;  // Change the running direction of the pump, if value = 1,
+                        // reverse the pump, otherwise keep value = 0
+    };
 
     // HID device
     USBHID _usbhid{};
@@ -54,23 +59,32 @@ class AT8236HID : USBHIDDevice
     // Control pins
     uint8_t _in1_pin{};
     uint8_t _in2_pin{};
+
     // Speed control
     float _speed{};
     int _speed_to_report{};
 
     // Direction control
-    unsigned long _last_reverse_time;
     int _direction{0};
 
     // Running control
     bool _rewarding{false};
-    bool _running{false};
+    std::atomic<bool> stop_request_{false};
+
+    void cmd_parser(report_t &report);
+
+    static void work_thread(void *param);
+    void add_task(float duration);
+
+    void start_tmp();
+    void stop_tmp();
 
   public:
+    QueueHandle_t task_queue{};
     AT8236HID(uint8_t in1_pin, uint8_t in2_pin, float speed);
     ~AT8236HID() = default;
 
-    auto start(int duration = -1) -> void;
+    auto start(float duration = 0) -> void;
     auto stop() -> void;
     auto reverse() -> void;
     auto set_speed(float speed) -> void;
@@ -81,109 +95,17 @@ class AT8236HID : USBHIDDevice
     auto _onOutput(uint8_t report_id, const uint8_t *buffer, uint16_t len) -> void;
 };
 
-/// @brief Init AT8236Brushless
-/// @param in1_pin Positive pin
-/// @param in2_pin Negative pin
-/// @param speed Initial speed
-/// @param speed_ctrl_pin Speed control pin
-/// @param report_pin Report pin
-/// @param direction_ctrl_pin Running direction control pin
-inline AT8236HID::AT8236HID(uint8_t in1_pin, uint8_t in2_pin, float speed)
-    : _in1_pin(in1_pin), _in2_pin(in2_pin), _speed(constrain(speed, 0.0f, 1.0f))
+inline void AT8236HID::cmd_parser(report_t &report)
 {
-    // Set up positive pin and negative pin
-    pinMode(_in1_pin, OUTPUT);
-    pinMode(_in2_pin, OUTPUT);
-    _speed_to_report = static_cast<int>(speed * 255);
-
-    // Anti-shake
-    _last_reverse_time = millis();
-
-    // Set up HID device
-    static bool initialized{false};
-    if (!initialized)
-    {
-        initialized = true;
-        _usbhid.addDevice(this, sizeof(report_descriptor));
-    }
-
-    this->stop();
-}
-
-/// @brief Start the pump with a given duration
-/// @param duraiton Duration of the pump
-/// @return
-inline auto AT8236HID::start(int duraiton) -> void
-{
-    this->stop();
-
-    analogWrite(_in1_pin, _speed_to_report);
-    analogWrite(_in2_pin, LOW);
-
-    _rewarding = true;
-
-    if (duraiton > 0)
-    {
-        vTaskDelay(duraiton);
-        this->stop();
-    }
-}
-
-inline auto AT8236HID::stop() -> void
-{
-    analogWrite(_in1_pin, LOW);
-    analogWrite(_in2_pin, LOW);
-
-    _rewarding = false;
-}
-
-inline auto AT8236HID::reverse() -> void
-{
-    // Get current time for anti-shake
-    auto currecnt_time = millis();
-
-    if (currecnt_time - _last_reverse_time > 1000)
-    {
-        if (_rewarding)
-        {
-            this->stop();
-            std::swap(_in1_pin, _in2_pin);
-            this->start();
-        }
-        else
-        {
-            std::swap(_in1_pin, _in2_pin);
-        }
-
-        // Update last reverse time
-        _last_reverse_time = millis();
-    }
-}
-
-inline auto AT8236HID::begin() -> void
-{
-    _usbhid.begin();
-}
-
-inline auto AT8236HID::_onGetDescriptor(uint8_t *buffer) -> uint16_t
-{
-    memcpy(buffer, report_descriptor, sizeof(report_descriptor));
-    return sizeof(report_descriptor);
-}
-
-inline auto AT8236HID::_onOutput(uint8_t report_id, const uint8_t *buffer, uint16_t len) -> void
-{
-    report_t report{};
-    memcpy(&report, buffer, sizeof(report));
     if (report.reward == 1)
     {
         if (report.duration > 0)
         {
-            this->start(report.duration);
+            add_task(report.duration);
         }
         else
         {
-            this->start();
+            add_task(-1);
         }
     }
     else if (report.stop == 1)
@@ -200,6 +122,146 @@ inline auto AT8236HID::_onOutput(uint8_t report_id, const uint8_t *buffer, uint1
     }
 }
 
+inline void AT8236HID::work_thread(void *param)
+{
+    AT8236HID *pump = static_cast<AT8236HID *>(param);
+    float duration{};
+    while (true)
+    {
+        if (xQueueReceive(pump->task_queue, &duration, portMAX_DELAY) == pdPASS)
+        {
+            pump->start(duration);
+        }
+    }
+}
+
+inline void AT8236HID::add_task(float duration)
+{
+    xQueueSend(task_queue, &duration, 0);
+}
+
+inline void AT8236HID::start_tmp()
+{
+    stop_tmp();
+
+    analogWrite(_in1_pin, _speed_to_report);
+    analogWrite(_in2_pin, LOW);
+
+    _rewarding = true;
+}
+
+inline void AT8236HID::stop_tmp()
+{
+    analogWrite(_in1_pin, LOW);
+    analogWrite(_in2_pin, LOW);
+
+    _rewarding = false;
+}
+
+/// @brief Init AT8236Brushless
+/// @param in1_pin Positive pin
+/// @param in2_pin Negative pin
+/// @param speed Initial speed
+/// @param speed_ctrl_pin Speed control pin
+/// @param report_pin Report pin
+/// @param direction_ctrl_pin Running direction control pin
+inline AT8236HID::AT8236HID(uint8_t in1_pin, uint8_t in2_pin, float speed)
+    : _in1_pin(in1_pin), _in2_pin(in2_pin), _speed(constrain(speed, 0.0f, 1.0f))
+{
+    // Set up positive pin and negative pin
+    pinMode(_in1_pin, OUTPUT);
+    pinMode(_in2_pin, OUTPUT);
+    _speed_to_report = static_cast<int>(speed * 255);
+
+    // Set up HID device
+    static bool initialized{false};
+    if (!initialized)
+    {
+        initialized = true;
+        _usbhid.addDevice(this, sizeof(report_descriptor));
+    }
+
+    // Create task queue
+    task_queue = xQueueCreate(100, sizeof(float));
+
+    this->stop();
+}
+
+/// @brief Start the pump with a given duration
+/// @param duraiton Duration of the pump
+/// @return
+inline auto AT8236HID::start(float duration) -> void
+{
+    this->stop();
+
+    analogWrite(_in1_pin, _speed_to_report);
+    analogWrite(_in2_pin, LOW);
+
+    _rewarding = true;
+
+    if (duration > 0)
+    {
+        auto elapsed = 0;
+        while (elapsed < duration)
+        {
+            int delay_time = std::min(100.0f, duration - elapsed);
+            vTaskDelay(pdMS_TO_TICKS(delay_time));
+            elapsed += delay_time;
+
+            if (stop_request_.load())
+            {
+                stop_request_.store(false);
+                break;
+            }
+        }
+        this->stop();
+    }
+}
+
+inline auto AT8236HID::stop() -> void
+{
+    analogWrite(_in1_pin, LOW);
+    analogWrite(_in2_pin, LOW);
+
+    _rewarding = false;
+    stop_request_.store(false);
+}
+
+inline auto AT8236HID::reverse() -> void
+{
+    if (_rewarding)
+    {
+        stop_tmp();
+        std::swap(_in1_pin, _in2_pin);
+        start_tmp();
+    }
+    else
+    {
+        std::swap(_in1_pin, _in2_pin);
+    }
+}
+
+inline auto AT8236HID::begin() -> void
+{
+    _usbhid.begin();
+
+    TaskHandle_t worker_task_handle{};
+    xTaskCreate(work_thread, "AT8236HID", configMINIMAL_STACK_SIZE, this, tskIDLE_PRIORITY + 1, &worker_task_handle);
+}
+
+inline auto AT8236HID::_onGetDescriptor(uint8_t *buffer) -> uint16_t
+{
+    memcpy(buffer, report_descriptor, sizeof(report_descriptor));
+    return sizeof(report_descriptor);
+}
+
+inline auto AT8236HID::_onOutput(uint8_t report_id, const uint8_t *buffer, uint16_t len) -> void
+{
+    report_t report{};
+    memcpy(&report, buffer, sizeof(report));
+    cmd_parser(report);
+}
+
 inline auto AT8236HID::set_speed(float speed) -> void
 {
     _speed = constrain(speed, 0.0f, 1.0f);
@@ -209,6 +271,11 @@ inline auto AT8236HID::set_speed(float speed) -> void
     {
         analogWrite(_in1_pin, _speed_to_report);
     }
+}
+
+inline auto AT8236HID::get_speed() -> float
+{
+    return _speed;
 }
 
 } // namespace simia
