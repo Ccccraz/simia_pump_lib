@@ -62,7 +62,6 @@ class AT8236BrushlessHID : USBHIDDevice
 
     // Running control
     bool _rewarding{false};
-    bool _running{false};
 
   public:
     AT8236BrushlessHID(uint8_t in1_pin, uint8_t in2_pin, float speed, uint8_t speed_ctrl_pin, uint8_t report_pin,
