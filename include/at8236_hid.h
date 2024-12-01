@@ -225,6 +225,11 @@ inline auto AT8236HID::stop() -> void
 
     _rewarding = false;
     stop_request_.store(false);
+
+    float receivedItem{};
+    while (xQueueReceive(task_queue, &receivedItem, 0) == pdTRUE)
+    {
+    }
 }
 
 inline auto AT8236HID::reverse() -> void
