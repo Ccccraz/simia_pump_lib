@@ -192,8 +192,6 @@ inline AT8236HID::AT8236HID(uint8_t in1_pin, uint8_t in2_pin, float speed)
 /// @return
 inline auto AT8236HID::start(float duration) -> void
 {
-    this->stop();
-
     analogWrite(_in1_pin, _speed_to_report);
     analogWrite(_in2_pin, LOW);
 
@@ -214,7 +212,7 @@ inline auto AT8236HID::start(float duration) -> void
                 break;
             }
         }
-        this->stop();
+        stop_tmp();
     }
 }
 
@@ -251,7 +249,7 @@ inline auto AT8236HID::begin() -> void
     _usbhid.begin();
 
     TaskHandle_t worker_task_handle{};
-    xTaskCreate(work_thread, "AT8236HID", configMINIMAL_STACK_SIZE, this, tskIDLE_PRIORITY + 1, &worker_task_handle);
+    xTaskCreate(work_thread, "AT8236HID", 1024 * 8, this, tskIDLE_PRIORITY + 1, &worker_task_handle);
 }
 
 inline auto AT8236HID::_onGetDescriptor(uint8_t *buffer) -> uint16_t
