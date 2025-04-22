@@ -1,5 +1,6 @@
 #ifndef AT8236_HID
 #define AT8236_HID
+
 #include <Arduino.h>
 #include <USB.h>
 #include <USBHID.h>
@@ -9,6 +10,7 @@
 
 namespace simia
 {
+
 class AT8236HID : USBHIDDevice
 {
   private:
@@ -34,23 +36,18 @@ class AT8236HID : USBHIDDevice
         0xc0              // END_COLLECTION
     };
 
-    // Output report
-    // example command:
-    // start pump: [1, 0, 0, 0, 0]
-    // start pump for 1s: [1, 1000, 0, 0, 0]
-    // stop pump: [0, 0, 1, 0, 0]
-    // set speed: [0, 0, 0, 0.5, 0]
-    // reverse pump: [0, 0, 0 , 0, 1]
+    enum cmd_t
+    {
+        START = 0,
+        STOP = 1,
+        REVERSE = 2,
+        SET_SPEED = 3,
+    };
+
     struct report_t
     {
-        float reward;   // Start pump when value = 1, otherwise keep value = 0
-        float duration; // Start pump and stop after a certain time, unit is
-                        // milliseconds
-        float stop;     // Stop pump when value = 1, otherwise keep value = 0
-        float speed;    // Set the running speed of the pump, the value range is 0 - 1,
-                        // representing the percentage of the maximum speed of the pump
-        float reverse;  // Change the running direction of the pump, if value = 1,
-                        // reverse the pump, otherwise keep value = 0
+        uint32_t cmd;
+        uint32_t payload;
     };
 
     // HID device
@@ -74,20 +71,20 @@ class AT8236HID : USBHIDDevice
     void cmd_parser(report_t &report);
 
     static void work_thread(void *param);
-    void add_task(float duration);
+    void add_task(uint32_t duration);
 
-    void start_tmp();
-    void stop_tmp();
+    void start_direct();
+    void stop_direct();
 
   public:
     QueueHandle_t task_queue{};
     AT8236HID(uint8_t in1_pin, uint8_t in2_pin, float speed);
     ~AT8236HID() = default;
 
-    auto start(float duration = 0) -> void;
+    auto start(uint32_t duration = 0) -> void;
     auto stop() -> void;
     auto reverse() -> void;
-    auto set_speed(float speed) -> void;
+    auto set_speed(uint32_t speed) -> void;
     auto get_speed() -> float;
 
     auto begin() -> void;
@@ -97,35 +94,29 @@ class AT8236HID : USBHIDDevice
 
 inline void AT8236HID::cmd_parser(report_t &report)
 {
-    if (report.reward == 1)
+    switch (report.cmd)
     {
-        if (report.duration > 0)
-        {
-            add_task(report.duration);
-        }
-        else
-        {
-            add_task(-1);
-        }
-    }
-    else if (report.stop == 1)
-    {
-        this->stop();
-    }
-    else if (report.speed > 0)
-    {
-        this->set_speed(report.speed);
-    }
-    else if (report.reverse == 1)
-    {
-        this->reverse();
+    case START:
+        add_task(report.payload);
+        break;
+    case STOP:
+        stop();
+        break;
+    case REVERSE:
+        reverse();
+        break;
+    case SET_SPEED:
+        set_speed(report.payload);
+        break;
+    default:
+        break;
     }
 }
 
 inline void AT8236HID::work_thread(void *param)
 {
     AT8236HID *pump = static_cast<AT8236HID *>(param);
-    float duration{};
+    uint32_t duration{};
     while (true)
     {
         if (xQueueReceive(pump->task_queue, &duration, portMAX_DELAY) == pdPASS)
@@ -135,14 +126,14 @@ inline void AT8236HID::work_thread(void *param)
     }
 }
 
-inline void AT8236HID::add_task(float duration)
+inline void AT8236HID::add_task(uint32_t duration)
 {
     xQueueSend(task_queue, &duration, 0);
 }
 
-inline void AT8236HID::start_tmp()
+inline void AT8236HID::start_direct()
 {
-    stop_tmp();
+    stop_direct();
 
     analogWrite(_in1_pin, _speed_to_report);
     analogWrite(_in2_pin, LOW);
@@ -150,7 +141,7 @@ inline void AT8236HID::start_tmp()
     _rewarding = true;
 }
 
-inline void AT8236HID::stop_tmp()
+inline void AT8236HID::stop_direct()
 {
     analogWrite(_in1_pin, LOW);
     analogWrite(_in2_pin, LOW);
@@ -162,9 +153,6 @@ inline void AT8236HID::stop_tmp()
 /// @param in1_pin Positive pin
 /// @param in2_pin Negative pin
 /// @param speed Initial speed
-/// @param speed_ctrl_pin Speed control pin
-/// @param report_pin Report pin
-/// @param direction_ctrl_pin Running direction control pin
 inline AT8236HID::AT8236HID(uint8_t in1_pin, uint8_t in2_pin, float speed)
     : _in1_pin(in1_pin), _in2_pin(in2_pin), _speed(constrain(speed, 0.0f, 1.0f))
 {
@@ -182,29 +170,30 @@ inline AT8236HID::AT8236HID(uint8_t in1_pin, uint8_t in2_pin, float speed)
     }
 
     // Create task queue
-    task_queue = xQueueCreate(100, sizeof(float));
+    task_queue = xQueueCreate(100, sizeof(uint32_t));
 
-    this->stop();
+    this->stop_direct();
 }
 
 /// @brief Start the pump with a given duration
 /// @param duraiton Duration of the pump
 /// @return
-inline auto AT8236HID::start(float duration) -> void
+inline auto AT8236HID::start(uint32_t duration) -> void
 {
     analogWrite(_in1_pin, _speed_to_report);
     analogWrite(_in2_pin, LOW);
 
     _rewarding = true;
 
-    if (duration > 0)
+    const uint32_t start_time = millis();
+    const uint32_t end_time = start_time + duration;
+
+    if (duration == 0)
     {
-        auto elapsed = 0;
-        while (elapsed < duration)
+        while (true)
         {
-            int delay_time = std::min(100.0f, duration - elapsed);
-            vTaskDelay(pdMS_TO_TICKS(delay_time));
-            elapsed += delay_time;
+            constexpr uint32_t check_interval_ms = 100;
+            vTaskDelay(pdMS_TO_TICKS(check_interval_ms));
 
             if (stop_request_.load())
             {
@@ -212,7 +201,23 @@ inline auto AT8236HID::start(float duration) -> void
                 break;
             }
         }
-        stop_tmp();
+    }
+    else
+    {
+        while (millis() < end_time)
+        {
+            constexpr uint32_t check_interval_ms = 100;
+            const uint32_t remaining_time = end_time - millis();
+            const uint32_t delay_time = std::min(check_interval_ms, remaining_time);
+
+            vTaskDelay(pdMS_TO_TICKS(delay_time));
+
+            if (stop_request_.load())
+            {
+                stop_request_.store(false);
+                break;
+            }
+        }
     }
 }
 
@@ -222,9 +227,9 @@ inline auto AT8236HID::stop() -> void
     analogWrite(_in2_pin, LOW);
 
     _rewarding = false;
-    stop_request_.store(false);
+    stop_request_.store(true);
 
-    float receivedItem{};
+    uint32_t receivedItem{};
     while (xQueueReceive(task_queue, &receivedItem, 0) == pdTRUE)
     {
     }
@@ -234,9 +239,9 @@ inline auto AT8236HID::reverse() -> void
 {
     if (_rewarding)
     {
-        stop_tmp();
+        stop_direct();
         std::swap(_in1_pin, _in2_pin);
-        start_tmp();
+        start_direct();
     }
     else
     {
@@ -265,9 +270,9 @@ inline auto AT8236HID::_onOutput(uint8_t report_id, const uint8_t *buffer, uint1
     cmd_parser(report);
 }
 
-inline auto AT8236HID::set_speed(float speed) -> void
+inline auto AT8236HID::set_speed(uint32_t speed) -> void
 {
-    _speed = constrain(speed, 0.0f, 1.0f);
+    _speed = constrain(speed, 0, 100) / 100.0f;
     _speed_to_report = static_cast<int>(_speed * 255);
 
     if (_rewarding)
