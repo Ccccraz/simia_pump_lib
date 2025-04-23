@@ -30,7 +30,7 @@ class AT8236HID : USBHIDDevice
         0x06, 0x00, 0xff, //     USAGE_PAGE (Vendor Defined Page 1)
         0x09, 0x01,       //     USAGE (Vendor Usage 1)
         0x75, 0x20,       //     REPORT_SIZE (32)
-        0x95, 0x05,       //     REPORT_COUNT (5)
+        0x95, 0x02,       //     REPORT_COUNT (2)
         0x91, 0x02,       //     OUTPUT (Data,Var,Abs)
         0xc0,             //   END_COLLECTION
         0xc0              // END_COLLECTION
@@ -71,7 +71,6 @@ class AT8236HID : USBHIDDevice
     void cmd_parser(report_t &report);
 
     static void work_thread(void *param);
-    void add_task(uint32_t duration);
 
     void start_direct();
     void stop_direct();
@@ -81,6 +80,7 @@ class AT8236HID : USBHIDDevice
     AT8236HID(uint8_t in1_pin, uint8_t in2_pin, float speed);
     ~AT8236HID() = default;
 
+    void add_task(uint32_t duration);
     auto start(uint32_t duration = 0) -> void;
     auto stop() -> void;
     auto reverse() -> void;
@@ -219,6 +219,7 @@ inline auto AT8236HID::start(uint32_t duration) -> void
             }
         }
     }
+    stop_direct();
 }
 
 inline auto AT8236HID::stop() -> void
@@ -226,13 +227,13 @@ inline auto AT8236HID::stop() -> void
     analogWrite(_in1_pin, LOW);
     analogWrite(_in2_pin, LOW);
 
-    _rewarding = false;
-    stop_request_.store(true);
-
     uint32_t receivedItem{};
     while (xQueueReceive(task_queue, &receivedItem, 0) == pdTRUE)
     {
     }
+
+    _rewarding = false;
+    stop_request_.store(true);
 }
 
 inline auto AT8236HID::reverse() -> void
